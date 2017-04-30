@@ -1,6 +1,6 @@
 package com.epam.training.spark.sql
 
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.sql.{Column, DataFrame, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.hive.HiveContext
 import org.apache.spark.{SparkConf, SparkContext}
@@ -58,14 +58,40 @@ object Homework {
 
   }
 
-  def readCsvData(sqlContext: HiveContext, rawDataPath: String): DataFrame = ???
+  def readCsvData(sqlContext: HiveContext, rawDataPath: String): DataFrame = {
+    val options = Map("header" -> "true", "DELIMITER" -> ";")
+    sqlContext.read.options(options).schema(Constants.CLIMATE_TYPE).csv(rawDataPath)
+  }
 
-  def findErrors(climateDataFrame: DataFrame): Array[Row] = ???
+  def findErrors(climateDataFrame: DataFrame): Array[Row] = {
+    val exprs = climateDataFrame.columns.map(col).map(nullCount)
+    climateDataFrame.agg(exprs.head, exprs.tail: _*).collect()
+  }
 
-  def averageTemperature(climateDataFrame: DataFrame, monthNumber: Int, dayOfMonth: Int): DataFrame = ???
+  private def nullCount(column: Column): Column =
+    sum(when(column.isNull, 1).otherwise(0))
 
-  def predictTemperature(climateDataFrame: DataFrame, monthNumber: Int, dayOfMonth: Int): Double = ???
+  def averageTemperature(climateDataFrame: DataFrame, monthNumber: Int, dayOfMonth: Int): DataFrame = {
+    import climateDataFrame.sqlContext.implicits._
+    val condition = isMonthAndDayEqual($"observation_date", monthNumber, dayOfMonth)
+    climateDataFrame.select($"mean_temperature").where(condition)
+  }
 
+  def predictTemperature(climateDataFrame: DataFrame, monthNumber: Int, dayOfMonth: Int): Double = {
+    val condition = isMonthAndDayEqualOrAdjacent(climateDataFrame("observation_date"), monthNumber, dayOfMonth)
+    climateDataFrame.groupBy(condition).avg("mean_temperature").toDF().first().getDouble(1)
+  }
+
+  private def isMonthAndDayEqual(date: Column, monthNumber: Int, dayOfMonth: Int): Column =
+    month(date).equalTo(monthNumber).and(dayofmonth(date).equalTo(dayOfMonth))
+
+  private def isMonthAndDayEqualOrAdjacent(date: Column, monthNumber: Int, dayOfMonth: Int): Column = {
+    val previousDate = date_sub(date, 1)
+    val nextDate = date_add(date, 1)
+    isMonthAndDayEqual(date, monthNumber, dayOfMonth)
+      .or(isMonthAndDayEqual(previousDate, monthNumber, dayOfMonth))
+      .or(isMonthAndDayEqual(nextDate, monthNumber, dayOfMonth))
+  }
 
 }
 
